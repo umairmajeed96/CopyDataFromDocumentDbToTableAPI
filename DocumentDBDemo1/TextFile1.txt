@@ -1,0 +1,280 @@
+﻿using Microsoft.Azure.Documents;
+using Microsoft.Azure.Documents.Client;
+using Microsoft.Azure.Documents.Linq;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Configuration;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+namespace DocumentDBDemo1
+{
+    class Program
+    {
+        private static DocumentClient client;
+        private const string EndpointUrl = "https://document-temp.documents.azure.com:443/";
+        private const string AuthorizationKey =
+           "1I0coHlBwKercLqxf8kS78PqnGuXX0iHSAmN6jg1w4UTWfjWDoHrjIRE6M9LJMJFCwLYzmSWH2Zx2zfn7uTupQ==";
+        private static Database database;
+        private static DocumentCollection collection;
+        static void Main(string[] args)
+        {
+            try
+            {
+                CreateDocumentClient().Wait();
+            }
+            catch (Exception e)
+            {
+                Exception baseException = e.GetBaseException();
+                Console.WriteLine("Error: {0}, Message: {1}", e.Message, baseException.Message);
+            }
+
+            Console.ReadKey();
+        }
+
+        private static async Task CreateDocumentClient()
+        {
+            // Create a new instance of the DocumentClient
+            using (var client = new DocumentClient(new Uri(EndpointUrl), AuthorizationKey))
+            {
+                //await CreateDatabase(client);
+                //database = client.CreateDatabaseQuery("SELECT * FROM c WHERE c.id = 'demodb'").AsEnumerable().First();
+                await CreateCollection(client, "MyCollection1");
+                //await CreateCollection(client, "MyCollection2", "S2");
+                //GetDatabases(client);
+                //await DeleteDatabase(client);
+                //GetDatabases(client);
+                database = client.CreateDatabaseQuery("SELECT * FROM c WHERE c.id = 'demodb'").AsEnumerable().First();
+                //await DeleteCollection(client, "MyCollection2");
+                collection = client.CreateDocumentCollectionQuery(database.CollectionsLink,"SELECT * FROM c WHERE c.id = 'MyCollection1'").AsEnumerable().First();
+                await CreateDocuments(client);
+                await QueryDocumentsWithPaging(client);
+                //QueryDocumentsWithLinq(client);
+                //Run Pre-Trigger
+                //await RunPreTrigger(collection.SelfLink);
+            }
+        }
+        private async static Task CreateDatabase(DocumentClient client)
+        {
+            Console.WriteLine();
+            Console.WriteLine("******** Create Database *******");
+
+            var databaseDefinition = new Database { Id = "demodb" };
+            var result = await client.CreateDatabaseAsync(databaseDefinition);
+            var database = result.Resource;
+
+            Console.WriteLine(" Database Id: {0}; Rid: {1}", database.Id, database.ResourceId);
+            Console.WriteLine("******** Database Created *******");
+        }
+        private static void GetDatabases(DocumentClient client)
+        {
+            Console.WriteLine();
+            Console.WriteLine();
+            Console.WriteLine("******** Get Databases List ********");
+
+            var databases = client.CreateDatabaseQuery().ToList();
+
+            foreach (var database in databases)
+            {
+                Console.WriteLine(" Database Id: {0}; Rid: {1}", database.Id, database.ResourceId);
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("Total databases: {0}", databases.Count);
+        }
+        private async static Task DeleteDatabase(DocumentClient client)
+        {
+            Console.WriteLine("******** Delete Database ********");
+            Database database = client
+               .CreateDatabaseQuery("SELECT * FROM c WHERE c.id = 'demodb'")
+               .AsEnumerable()
+               .First();
+            await client.DeleteDatabaseAsync(database.SelfLink);
+        }
+        private async static Task CreateCollection(DocumentClient client, string collectionId,
+        string offerType = "S1")
+        {
+
+            Console.WriteLine();
+            Console.WriteLine("**** Create Collection {0} in {1} ****", collectionId, database.Id);
+
+            var collectionDefinition = new DocumentCollection { Id = collectionId };
+            var options = new RequestOptions { OfferType = offerType };
+            var result = await client.CreateDocumentCollectionAsync(database.SelfLink,
+               collectionDefinition, options);
+            var collection = result.Resource;
+
+            Console.WriteLine("Created new collection");
+            ViewCollection(collection);
+        }
+
+        private static void ViewCollection(DocumentCollection collection)
+        {
+            Console.WriteLine("Collection ID: {0} ", collection.Id);
+            Console.WriteLine("Resource ID: {0} ", collection.ResourceId);
+            Console.WriteLine("Self Link: {0} ", collection.SelfLink);
+            Console.WriteLine("Documents Link: {0} ", collection.DocumentsLink);
+            Console.WriteLine("UDFs Link: {0} ", collection.UserDefinedFunctionsLink);
+            Console.WriteLine("StoredProcs Link: {0} ", collection.StoredProceduresLink);
+            Console.WriteLine("Triggers Link: {0} ", collection.TriggersLink);
+            Console.WriteLine("Timestamp: {0} ", collection.Timestamp);
+        }
+        private async static Task DeleteCollection(DocumentClient client,
+         string collectionId)
+        {
+
+            Console.WriteLine();
+            Console.WriteLine("**** Delete Collection {0} in {1} ****", collectionId,
+               database.Id);
+
+            var query = new SqlQuerySpec
+            {
+                QueryText = "SELECT * FROM c WHERE c.id = @id",
+                Parameters = new
+                  SqlParameterCollection {
+               new SqlParameter {
+                  Name = "@id", Value = collectionId
+               }
+            }
+            };
+
+            DocumentCollection collection = client.CreateDocumentCollectionQuery
+               (database.SelfLink, query).AsEnumerable().First();
+
+            await client.DeleteDocumentCollectionAsync(collection.SelfLink);
+            Console.WriteLine("Deleted collection {0} from database {1}", collectionId,
+               database.Id);
+        }
+        private async static Task CreateDocuments(DocumentClient client)
+        {
+            Console.WriteLine();
+            Console.WriteLine("**** Create Documents ****");
+            Console.WriteLine();
+
+            dynamic document1Definition = new
+            {
+                name = "New Customer 1",
+                address = new
+                {
+                    addressType = "Main Office",
+                    addressLine1 = "123 Main Street",
+                    location = new
+                    {
+                        city = "Brooklyn",
+                        stateProvinceName = "New York"
+                    },
+                    postalCode = "11229",
+                    countryRegionName = "United States"
+                },
+            };
+
+            Document document1 = await CreateDocument(client, document1Definition);
+            Console.WriteLine("Created document {0} from dynamic object", document1.Id);
+            Console.WriteLine();
+        }
+        private async static Task<Document> CreateDocument(DocumentClient client,
+   object documentObject)
+        {
+
+            var result = await client.CreateDocumentAsync(collection.SelfLink, documentObject);
+            var document = result.Resource;
+
+            Console.WriteLine("Created new document: {0}\r\n{1}", document.Id, document);
+            return result;
+        }
+        private async static Task QueryDocumentsWithPaging(DocumentClient client)
+        {
+            Console.WriteLine();
+            Console.WriteLine("**** Query Documents (paged results) ****");
+            Console.WriteLine();
+            Console.WriteLine("Quering for all documents");
+
+            var sql = "SELECT * FROM c";
+            var query = client.CreateDocumentQuery(collection.SelfLink, sql).AsDocumentQuery();
+
+            while (query.HasMoreResults)
+            {
+                var documents = await query.ExecuteNextAsync();
+
+                foreach (var document in documents)
+                {
+                    Console.WriteLine(" Id: {0}; Name: {1};", document.id, document.name);
+                }
+            }
+
+            Console.WriteLine();
+        }
+        private static async Task RunPreTrigger(string colSelfLink)
+        {
+            // 1. Create a trigger.
+            string triggerId = "CanonicalizeSchedule";
+            string body = File.ReadAllText(@"JS\CanonicalizeSchedule.js");
+            Trigger trigger = new Trigger
+            {
+                Id = triggerId,
+                Body = body,
+                TriggerOperation = TriggerOperation.Create,
+                TriggerType = TriggerType.Pre
+            };
+
+            await TryDeleteTrigger(colSelfLink, trigger.Id);
+            await client.CreateTriggerAsync(colSelfLink, trigger);
+
+            // 2. Create a few documents with the trigger.
+            var requestOptions = new RequestOptions { PreTriggerInclude = new List<string> { triggerId } };
+
+            await client.CreateDocumentAsync(colSelfLink, new
+            {
+                type = "Schedule",
+                name = "Music",
+                weekday = "mon",
+                startTime = DateTime.Parse("18:00", CultureInfo.InvariantCulture),
+                endTime = DateTime.Parse("19:00", CultureInfo.InvariantCulture)
+            }, requestOptions);
+
+            await client.CreateDocumentAsync(colSelfLink, new
+            {
+                type = "Schedule",
+                name = "Judo",
+                weekday = "tues",
+                startTime = DateTime.Parse("17:30", CultureInfo.InvariantCulture),
+                endTime = DateTime.Parse("19:00", CultureInfo.InvariantCulture)
+            }, requestOptions);
+
+            await client.CreateDocumentAsync(colSelfLink, new
+            {
+                type = "Schedule",
+                name = "Swimming",
+                weekday = "FRIDAY",
+                startTime = DateTime.Parse("19:00", CultureInfo.InvariantCulture),
+                endTime = DateTime.Parse("20:00", CultureInfo.InvariantCulture)
+            }, requestOptions);
+
+            // 3. Read the documents from the store. 
+            var results = client.CreateDocumentQuery<Document>(colSelfLink, "SELECT * FROM root r WHERE r.type='Schedule'");
+
+            // 4. Prints the results: see what the trigger did.
+            Console.WriteLine("Weekly schedule of classes:");
+            foreach (var result in results)
+            {
+                Console.WriteLine("{0}", result);
+            }
+
+        }
+        private static async Task TryDeleteTrigger(string colSelfLink, string triggerId)
+        {
+            Trigger trigger = client.CreateTriggerQuery(colSelfLink).Where(t => t.Id == triggerId).AsEnumerable().FirstOrDefault();
+            if (trigger != null)
+            {
+                await client.DeleteTriggerAsync(trigger.SelfLink);
+            }
+        }
+
+
+    }
+}

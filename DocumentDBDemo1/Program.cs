@@ -53,7 +53,7 @@ namespace DocumentDBDemo1
                 CloudTable table = tableClient.GetTableReference("People");
                 table.DeleteIfExists();
                 table.CreateIfNotExists();
-
+                //This is a comment
                 //await CreateDatabase(client);
                 database = client.CreateDatabaseQuery("SELECT * FROM c WHERE c.id = 'mynewdb1'").AsEnumerable().First();
                 //await CreateCollection(client, "MyCollection");
